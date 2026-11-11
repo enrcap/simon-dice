@@ -23,6 +23,6 @@ python -m venv .venv
 ## Siguientes pasos
 
 - Elegir qué objeto o zona seguirá la cámara y concretar la propuesta.
-- Calibrar la webcam con un patrón y guardar los parámetros y el error RMS.
+- [Calibrar la webcam con un patrón y guardar los parámetros y el error RMS](calibracion/README.md).
 - Detectar tarjetas y validar una secuencia de hasta cuatro patrones para desbloquear el seguimiento.
 - Mostrar el rectángulo de seguimiento y los FPS sobre el vídeo.
