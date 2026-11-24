@@ -21,15 +21,18 @@ def label(image, text, line=0):
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description="Simón dice con webcam")
-
+    parser.add_argument("--camera", type=int, default=0, choices=range(10))
+    parser.add_argument("--sin-espejo", action="store_true")
     args = parser.parse_args(argv)
-    camera = cv2.VideoCapture(0)
+    from .camera_open import open_camera
+    camera = open_camera(args.camera)
     try:
         while True:
             ok, image = camera.read()
             if not ok:
                 raise RuntimeError("No se reciben imágenes de la webcam.")
-
+            if not args.sin_espejo:
+                image = cv2.flip(image, 1)
             cv2.imshow(TITLE, image)
             key = cv2.waitKey(1) & 255
             if key in (27, ord("q")) or cv2.getWindowProperty(TITLE, cv2.WND_PROP_VISIBLE) < 1:
