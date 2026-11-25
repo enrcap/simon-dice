@@ -139,13 +139,124 @@ def listar_fotos(carpeta_fotos):
         if ruta.is_file() and ruta.suffix.lower() in EXTENSIONES
     )
 
-def main():
-    parser = argparse.ArgumentParser(description="Capturar vistas del tablero.")
-    parser.add_argument("--camara", type=int, default=0)
-    args = parser.parse_args()
-    folder = CARPETA / "fotos" / f"camara_{args.camara}"
-    capturar(listar_fotos(folder), folder, args.camara)
+
+def calibrar(fotos, cuadrado_mm, archivo_parametros, indice_camara):
+    if not math.isfinite(cuadrado_mm) or cuadrado_mm <= 0:
+        raise ValueError("El lado del cuadrado debe ser un número positivo en milímetros.")
+
+    columnas, filas = PATRON
+    puntos_tablero = np.array(
+        [(columna * cuadrado_mm, fila * cuadrado_mm, 0)
+         for fila in range(filas) for columna in range(columnas)],
+        dtype=np.float32,
+    )
+
+    resolucion = None
+    puntos_imagen = []
+    usadas = []
+    for ruta in fotos:
+        gris = leer_gris(ruta)
+        if gris is None:
+            print(f"Descartada {ruta.name}: imagen ilegible.")
+            continue
+        esquinas = detectar_esquinas(gris)
+        if esquinas is None:
+            print(f"Descartada {ruta.name}: tablero no detectado.")
+            continue
+        alto, ancho = gris.shape
+        if resolucion is None:
+            resolucion = (ancho, alto)
+        elif (ancho, alto) != resolucion:
+            raise ValueError(f"{ruta.name} mide {ancho}x{alto}. Usa fotos de una sola resolución.")
+        puntos_imagen.append(esquinas)
+        usadas.append(ruta.name)
+
+    if len(usadas) < 3:
+        raise ValueError(
+            f"Solo se detectó el tablero en {len(usadas)} fotos. "
+            "Captura más vistas con distintas posiciones e inclinaciones."
+        )
+
+    rms, matriz, distorsion, rotaciones, traslaciones = cv2.calibrateCamera(
+        [puntos_tablero] * len(usadas), puntos_imagen, resolucion, None, None
+    )
+    if not math.isfinite(rms) or not np.isfinite(matriz).all() or not np.isfinite(distorsion).all():
+        raise ValueError("La calibración no dio valores finitos. Captura vistas más variadas.")
+
+    errores = {}
+    for nombre, esquinas, rotacion, traslacion in zip(
+        usadas, puntos_imagen, rotaciones, traslaciones
+    ):
+        proyectadas, _ = cv2.projectPoints(
+            puntos_tablero, rotacion, traslacion, matriz, distorsion
+        )
+        diferencia = (esquinas - proyectadas).reshape(-1, 2)
+        errores[nombre] = float(np.sqrt(np.mean(np.sum(diferencia ** 2, axis=1))))
+
+    resultado = {
+        "indice_camara": indice_camara,
+        "resolucion": list(resolucion),
+        "esquinas_interiores": list(PATRON),
+        "lado_cuadrado_mm": cuadrado_mm,
+        "matriz_camara": matriz.tolist(),
+        "coeficientes_distorsion": distorsion.ravel().tolist(),
+        "rms_px": float(rms),
+        "numero_fotos": len(usadas),
+        "rms_por_foto_px": errores,
+    }
+    temporal = None
+    try:
+        with NamedTemporaryFile(mode="w", encoding="utf-8", dir=archivo_parametros.parent,
+                                prefix="parametros_", suffix=".tmp", delete=False) as salida:
+            temporal = Path(salida.name)
+            json.dump(resultado, salida, indent=2, ensure_ascii=False)
+            salida.write("\n")
+        temporal.replace(archivo_parametros)
+    finally:
+        if temporal is not None:
+            temporal.unlink(missing_ok=True)
+    print(f"Resolución: {resolucion[0]}x{resolucion[1]} | Fotos válidas: {len(usadas)}")
+    print(f"RMS global: {rms:.4f} px")
+    print(f"Matriz de cámara:\n{matriz}")
+    print(f"Coeficientes de distorsión: {distorsion.ravel()}")
+    print(f"Parámetros guardados en {archivo_parametros}")
+
+
+def main(argv=None, *, directory=None):
+    parser = argparse.ArgumentParser(description="Calibra la webcam con un tablero de ajedrez.")
+    parser.add_argument("--camara", type=int, default=0, choices=range(10), metavar="N")
+    parser.add_argument("--solo-fotos", action="store_true", help="Usa las fotos existentes sin abrir la webcam.")
+    parser.add_argument("--lado-mm", help="Lado de una casilla impresa, en milímetros.")
+    args = parser.parse_args(argv)
+    directorio = Path(directory) if directory is not None else CARPETA
+    archivo_parametros = directorio / "parametros.json"
+    carpeta_fotos = directorio / "fotos" / f"camara_{args.camara}"
+    try:
+        medida = args.lado_mm
+        if medida is None:
+            medida = input("¿Cuánto mide el lado de un cuadrado del tablero en mm? ").strip()
+        try:
+            cuadrado_mm = float(medida.replace(",", "."))
+        except ValueError:
+            raise ValueError("Introduce solo la medida en milímetros, por ejemplo 25 o 25,5.") from None
+        if not math.isfinite(cuadrado_mm) or cuadrado_mm <= 0:
+            raise ValueError("El lado del cuadrado debe ser un número positivo en milímetros.")
+        fotos = listar_fotos(carpeta_fotos)
+        if not args.solo_fotos:
+            capturar(fotos, carpeta_fotos, args.camara)
+            fotos = listar_fotos(carpeta_fotos)
+        if not fotos:
+            raise ValueError("No hay fotos del tablero para calibrar.")
+        print(f"Se revisarán {len(fotos)} fotos de {carpeta_fotos}.")
+        calibrar(fotos, cuadrado_mm, archivo_parametros, args.camara)
+    except EOFError:
+        print("Ejecuta el script desde la terminal de VS Code.", file=sys.stderr)
+        return 1
+    except (ValueError, OSError, cv2.error) as error:
+        print(f"Error: {error}", file=sys.stderr)
+        return 1
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())
