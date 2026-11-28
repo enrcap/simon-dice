@@ -73,3 +73,27 @@ def custom_erode(img):
 
     eroded = eroded[1:height+1, 1:width+1]
     return eroded
+
+
+def zona_tarjeta(frame):
+    """Zona central para presentar una tarjeta completa con su margen blanco."""
+    alto, ancho = frame.shape[:2]
+    lado = int(0.68 * min(alto, ancho))
+    x = (ancho - lado) // 2
+    y = (alto - lado) // 2
+    return x, y, x + lado, y + lado
+
+def candidatos_marco(frame):
+    x1, y1, x2, y2 = zona_tarjeta(frame)
+    region = frame[y1:y2, x1:x2]
+    gris = cv2.cvtColor(region, cv2.COLOR_BGR2GRAY)
+    _, gris = gaussian_blur(gris, sigma=.8, filter_shape=[3, 3])
+    bordes = cv2.Canny(gris, 50, 150)
+    contornos, _ = cv2.findContours(bordes, cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE)
+    for contorno in contornos:
+        if cv2.contourArea(contorno) < .018 * gris.size:
+            continue
+        perimetro = cv2.arcLength(contorno, True)
+        cuadrado = cv2.approxPolyDP(contorno, .035 * perimetro, True)
+        if len(cuadrado) == 4 and cv2.isContourConvex(cuadrado):
+            yield region, cuadrado, (x1, y1)
